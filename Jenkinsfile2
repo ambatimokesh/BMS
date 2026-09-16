@@ -8,15 +8,12 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-
         DOCKER_IMAGE = 'kastrov/bms:latest'
-
         EKS_CLUSTER_NAME = 'kastro-eks'
         AWS_REGION = 'us-east-1'
     }
 
     stages {
-
         stage('Clean Workspace') {
             steps {
                 cleanWs()
@@ -25,29 +22,18 @@ pipeline {
 
         stage('Checkout from Git') {
             steps {
-                git(
-                    branch: 'main',
-                    url: 'https://github.com/ambatimokesh/BMS.git'
-                )
-
-                sh '''
-                    echo "======================================"
-                    echo "Git Checkout Completed"
-                    echo "======================================"
-                    ls -la
-                '''
+                git branch: 'main', url: 'https://github.com/ambatimokesh/BMS.git'
+                sh 'ls -la'  // Verify files after checkout
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar-server') {
-                    sh '''
-                        echo "Running SonarQube Analysis..."
-
-                        $SCANNER_HOME/bin/sonar-scanner \
-                            -Dsonar.projectName=BMS \
-                            -Dsonar.projectKey=BMS
+                    sh ''' 
+                    $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BMS \
+                        -Dsonar.projectKey=BMS
                     '''
                 }
             }
@@ -56,10 +42,7 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate(
-                        abortPipeline: false,
-                        credentialsId: 'Sonar-token'
-                    )
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
                 }
             }
         }
@@ -67,95 +50,42 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    cd bookmyshow-app
-
-                    echo "Checking application files..."
-                    ls -la
-
-                    if [ -f package.json ]; then
-                        echo "package.json found."
-
-                        rm -rf node_modules
-                        rm -f package-lock.json
-
-                        npm install
-
-                        echo "Dependencies installed successfully."
-                    else
-                        echo "ERROR: package.json not found!"
-                        exit 1
-                    fi
+                cd bookmyshow-app
+                ls -la  # Verify package.json exists
+                if [ -f package.json ]; then
+                    rm -rf node_modules package-lock.json  # Remove old dependencies
+                    npm install  # Install fresh dependencies
+                else
+                    echo "Error: package.json not found in bookmyshow-app!"
+                    exit 1
+                fi
                 '''
             }
         }
 
         stage('OWASP FS Scan') {
             steps {
-                dependencyCheck(
-                    additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
-                    odcInstallation: 'dependency-check'
-                )
-
-                dependencyCheckPublisher(
-                    pattern: '**/dependency-check-report.xml'
-                )
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
 
         stage('Trivy FS Scan') {
             steps {
-                sh '''
-                    echo "Running Trivy filesystem scan..."
-
-                    trivy fs . > trivyfs.txt
-
-                    echo "Trivy scan completed."
-                '''
-            }
-        }
-
-        stage('Docker Check') {
-            steps {
-                sh '''
-                    echo "======================================"
-                    echo "Checking Docker"
-                    echo "======================================"
-
-                    which docker
-                    docker --version
-                    docker version
-                '''
+                sh 'trivy fs . > trivyfs.txt'
             }
         }
 
         stage('Docker Build & Push') {
             steps {
                 script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh ''' 
+                        echo "Building Docker image..."
+                        docker build --no-cache -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
 
-                    withDockerRegistry(
-                        credentialsId: 'docker'
-                    ) {
-
-                        sh '''
-                            echo "======================================"
-                            echo "Building Docker Image"
-                            echo "======================================"
-
-                            docker build \
-                                --no-cache \
-                                -t $DOCKER_IMAGE \
-                                -f bookmyshow-app/Dockerfile \
-                                bookmyshow-app
-
-                            echo "Docker image built successfully."
-
-                            echo "======================================"
-                            echo "Pushing Docker Image"
-                            echo "======================================"
-
-                            docker push $DOCKER_IMAGE
-
-                            echo "Docker image pushed successfully."
+                        echo "Pushing Docker image to Docker Hub..."
+                        docker push $DOCKER_IMAGE
                         '''
                     }
                 }
@@ -165,48 +95,23 @@ pipeline {
         stage('Deploy to EKS Cluster') {
             steps {
                 script {
-
                     sh '''
-                        echo "======================================"
-                        echo "Verifying AWS Credentials"
-                        echo "======================================"
+                    echo "Verifying AWS credentials..."
+                    aws sts get-caller-identity
 
-                        aws sts get-caller-identity
+                    echo "Configuring kubectl for EKS cluster..."
+                    aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
 
-                        echo "======================================"
-                        echo "Configuring EKS"
-                        echo "======================================"
+                    echo "Verifying kubeconfig..."
+                    kubectl config view
 
-                        aws eks update-kubeconfig \
-                            --name $EKS_CLUSTER_NAME \
-                            --region $AWS_REGION
+                    echo "Deploying application to EKS..."
+                    kubectl apply -f deployment.yml
+                    kubectl apply -f service.yml
 
-                        echo "======================================"
-                        echo "Checking EKS Nodes"
-                        echo "======================================"
-
-                        kubectl get nodes
-
-                        echo "======================================"
-                        echo "Deploying Application"
-                        echo "======================================"
-
-                        kubectl apply -f deployment.yml
-                        kubectl apply -f service.yml
-
-                        echo "======================================"
-                        echo "Checking Pods"
-                        echo "======================================"
-
-                        kubectl get pods -o wide
-
-                        echo "======================================"
-                        echo "Checking Services"
-                        echo "======================================"
-
-                        kubectl get svc
-
-                        echo "EKS Deployment Completed."
+                    echo "Verifying deployment..."
+                    kubectl get pods
+                    kubectl get svc
                     '''
                 }
             }
@@ -215,24 +120,13 @@ pipeline {
 
     post {
         always {
-
-            emailext(
-                attachLog: true,
-                subject: "${currentBuild.result}: BMS Jenkins Pipeline #${env.BUILD_NUMBER}",
-                body: """
-                    <h3>Book My Show CI/CD Pipeline</h3>
-
-                    <p><b>Project:</b> ${env.JOB_NAME}</p>
-                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Status:</b> ${currentBuild.result}</p>
-                    <p><b>Docker Image:</b> ${env.DOCKER_IMAGE}</p>
-                    <p><b>EKS Cluster:</b> ${env.EKS_CLUSTER_NAME}</p>
-                    <p><b>AWS Region:</b> ${env.AWS_REGION}</p>
-                    <p><b>Build URL:</b> ${env.BUILD_URL}</p>
-                """,
+            emailext attachLog: true,
+                subject: "'${currentBuild.result}'",
+                body: "Project: ${env.JOB_NAME}<br/>" +
+                      "Build Number: ${env.BUILD_NUMBER}<br/>" +
+                      "URL: ${env.BUILD_URL}<br/>",
                 to: 'kastrokiran@gmail.com',
                 attachmentsPattern: 'trivyfs.txt'
-            )
         }
     }
 }

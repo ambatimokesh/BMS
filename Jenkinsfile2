@@ -27,7 +27,7 @@ pipeline {
             steps {
                 git(
                     branch: 'main',
-                    url: 'https://github.com/mokeshambati/Book-My-Show.git'
+                    url: 'https://github.com/ambatimokesh/BMS.git'
                 )
 
                 sh '''
@@ -43,9 +43,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('sonar-server') {
                     sh '''
-                        echo "======================================"
-                        echo "Running SonarQube Analysis"
-                        echo "======================================"
+                        echo "Running SonarQube Analysis..."
 
                         $SCANNER_HOME/bin/sonar-scanner \
                             -Dsonar.projectName=BMS \
@@ -58,10 +56,6 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    echo "======================================"
-                    echo "Checking SonarQube Quality Gate"
-                    echo "======================================"
-
                     waitForQualityGate(
                         abortPipeline: false,
                         credentialsId: 'Sonar-token'
@@ -73,20 +67,12 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    echo "======================================"
-                    echo "Installing Node Dependencies"
-                    echo "======================================"
-
                     cd bookmyshow-app
 
-                    echo "Current directory:"
-                    pwd
-
-                    echo "Application files:"
+                    echo "Checking application files..."
                     ls -la
 
                     if [ -f package.json ]; then
-
                         echo "package.json found."
 
                         rm -rf node_modules
@@ -94,13 +80,10 @@ pipeline {
 
                         npm install
 
-                        echo "Node dependencies installed successfully."
-
+                        echo "Dependencies installed successfully."
                     else
-
                         echo "ERROR: package.json not found!"
                         exit 1
-
                     fi
                 '''
             }
@@ -108,10 +91,6 @@ pipeline {
 
         stage('OWASP FS Scan') {
             steps {
-                echo "======================================"
-                echo "Running OWASP Dependency-Check"
-                echo "======================================"
-
                 dependencyCheck(
                     additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
                     odcInstallation: 'dependency-check'
@@ -126,16 +105,11 @@ pipeline {
         stage('Trivy FS Scan') {
             steps {
                 sh '''
-                    echo "======================================"
-                    echo "Running Trivy Filesystem Scan"
-                    echo "======================================"
+                    echo "Running Trivy filesystem scan..."
 
                     trivy fs . > trivyfs.txt
 
-                    echo "Trivy filesystem scan completed."
-
-                    echo "Report generated:"
-                    ls -lh trivyfs.txt
+                    echo "Trivy scan completed."
                 '''
             }
         }
@@ -147,13 +121,8 @@ pipeline {
                     echo "Checking Docker"
                     echo "======================================"
 
-                    echo "Docker location:"
                     which docker
-
-                    echo "Docker version:"
                     docker --version
-
-                    echo "Docker server/client:"
                     docker version
                 '''
             }
@@ -162,10 +131,6 @@ pipeline {
         stage('Docker Build & Push') {
             steps {
                 script {
-
-                    echo "======================================"
-                    echo "Docker Build & Push"
-                    echo "======================================"
 
                     withDockerRegistry(
                         credentialsId: 'docker'
@@ -182,21 +147,15 @@ pipeline {
                                 -f bookmyshow-app/Dockerfile \
                                 bookmyshow-app
 
-                            echo "======================================"
-                            echo "Docker Image Built Successfully"
-                            echo "======================================"
-
-                            docker images | grep kastrov/bms || true
+                            echo "Docker image built successfully."
 
                             echo "======================================"
-                            echo "Pushing Image to Docker Hub"
+                            echo "Pushing Docker Image"
                             echo "======================================"
 
                             docker push $DOCKER_IMAGE
 
-                            echo "======================================"
-                            echo "Docker Image Pushed Successfully"
-                            echo "======================================"
+                            echo "Docker image pushed successfully."
                         '''
                     }
                 }
@@ -209,13 +168,13 @@ pipeline {
 
                     sh '''
                         echo "======================================"
-                        echo "AWS Account Verification"
+                        echo "Verifying AWS Credentials"
                         echo "======================================"
 
                         aws sts get-caller-identity
 
                         echo "======================================"
-                        echo "Configuring EKS Kubeconfig"
+                        echo "Configuring EKS"
                         echo "======================================"
 
                         aws eks update-kubeconfig \
@@ -223,13 +182,13 @@ pipeline {
                             --region $AWS_REGION
 
                         echo "======================================"
-                        echo "Checking Kubernetes Cluster"
+                        echo "Checking EKS Nodes"
                         echo "======================================"
 
                         kubectl get nodes
 
                         echo "======================================"
-                        echo "Deploying Kubernetes Resources"
+                        echo "Deploying Application"
                         echo "======================================"
 
                         kubectl apply -f deployment.yml
@@ -247,9 +206,7 @@ pipeline {
 
                         kubectl get svc
 
-                        echo "======================================"
-                        echo "EKS Deployment Completed"
-                        echo "======================================"
+                        echo "EKS Deployment Completed."
                     '''
                 }
             }
@@ -257,12 +214,7 @@ pipeline {
     }
 
     post {
-
         always {
-            echo "======================================"
-            echo "Pipeline Completed"
-            echo "Build Status: ${currentBuild.result}"
-            echo "======================================"
 
             emailext(
                 attachLog: true,
